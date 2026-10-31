@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Page template</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <button class="icon-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+  <h1>My page</h1>
+  <span class="spacer"></span>
+</header>
+
+<aside id="sidebar" aria-label="Sidebar">
+  <nav>
+    <a href="#home" id="navHome" aria-current="page">Home</a>
+    <a href="#" id="printLink">Print practice sheet</a>
+    <a href="#options" id="navOptions">Options</a>
+  </nav>
+</aside>
+<div id="scrim"></div>
+
+<main>
+  <div id="practiceView">
+  <div class="toolbar">
+    <h2>Math practice</h2>
+    <span class="spacer"></span>
+    <span class="field" id="qField">
+      <button class="btn secondary main" type="button">Questions: <span class="val">10</span></button>
+      <input type="number" min="1" max="50" step="1" hidden aria-label="Number of questions">
+      <span class="steps">
+        <button class="step up" type="button" aria-label="More questions">▲</button>
+        <button class="step down" type="button" aria-label="Fewer questions">▼</button>
+      </span>
+    </span>
+    <span class="field" id="dField">
+      <button class="btn secondary main" type="button">Digits: <span class="val">2</span></button>
+      <input type="number" min="1" max="4" step="1" hidden aria-label="Number of digits">
+      <span class="steps">
+        <button class="step up" type="button" aria-label="More digits">▲</button>
+        <button class="step down" type="button" aria-label="Fewer digits">▼</button>
+      </span>
+    </span>
+    <select id="opSelect" aria-label="Operation" autocomplete="off">
+      <option value="add">Addition</option>
+      <option value="sub">Subtraction</option>
+      <option value="mul" selected>Multiplication</option>
+      <option value="div">Division</option>
+    </select>
+    <button class="btn secondary" id="newBtn">New problem</button>
+  </div>
+  <div id="problem">
+    <div id="progress"></div>
+    <div class="stack">
+      <div class="row"><span id="numA"></span></div>
+      <div class="row"><span class="op" id="opSym">×</span><span id="numB"></span></div>
+      <div class="rule"></div>
+    </div>
+    <input id="answer" type="text" inputmode="numeric" autocomplete="off" aria-label="Your answer">
+    <button class="btn" id="checkBtn">Check</button>
+    <div id="feedback" role="status"></div>
+  </div>
+  </div>
+
+  <div id="optionsView" hidden>
+    <div class="toolbar"><h2>Options</h2></div>
+    <div class="panel">
+      <h3>Theme</h3>
+      <select id="themeSelect" aria-label="Theme" autocomplete="off">
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
+    <div class="panel">
+      <h3>Accessibility</h3>
+      <label class="check">Animations
+        <select id="motionSelect" aria-label="Animations" autocomplete="off">
+          <option value="full">Full</option>
+          <option value="reduced">Reduced (shorter)</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <p class="note">Applies to the sidebar sliding in and the screen dimming behind it. Until you choose, the starting option follows your device's reduce-motion setting.</p>
+    </div>
+    <div class="panel">
+      <h3>Score</h3>
+      <label class="check"><input type="checkbox" id="saveScore" autocomplete="off"> Save my score to a cookie</label>
+      <p id="scoreInfo" class="note"></p>
+    </div>
+    <div class="panel">
+      <h3>Presets</h3>
+      <p class="note" style="margin: 0 0 12px">Save the current question settings under a name.</p>
+      <div class="row-form">
+        <input type="text" id="presetName" placeholder="Preset name" maxlength="40" aria-label="Preset name">
+        <button class="btn" id="savePreset" type="button">Save current settings</button>
+      </div>
+      <ul id="presetList"></ul>
+    </div>
+  </div>
+</main>
+
+<section id="sheet" aria-hidden="true"></section>
+
+<script>
+const body = document.body;
+const menuBtn = document.getElementById('menuBtn');
+
+function setMenu(open) {
+  body.classList.toggle('menu-open', open);
+  menuBtn.setAttribute('aria-expanded', open);
+  menuBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+}
+menuBtn.addEventListener('click', () => setMenu(!body.classList.contains('menu-open')));
+document.getElementById('scrim').addEventListener('click', () => setMenu(false));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
+
+const settings = { total: 10, digits: 2, op: 'mul' };
+const SYMBOLS = { add: '+', sub: '−', mul: '×', div: '÷' };
+let a = 0, b = 0, expected = 0;
+let index = 0, score = 0;
+let solved = false, missed = false, counted = false, done = false;
+
+const answer = document.getElementById('answer');
+const feedback = document.getElementById('feedback');
+const progress = document.getElementById('progress');
+const checkBtn = document.getElementById('checkBtn');
+
+const totalNow = () => Math.max(settings.total, index + 1);
+const randN = n => Math.floor(Math.random() * 9 * 10 ** (n - 1)) + 10 ** (n - 1);
+
+function makeProblem(cfg = settings) {
+  const n = cfg.digits;
+  let x = randN(n), y = randN(n);
+  if (cfg.op === 'add') { a = x; b = y; expected = x + y; }
+  else if (cfg.op === 'sub') { a = Math.max(x, y); b = Math.min(x, y); expected = a - b; }
+  else if (cfg.op === 'mul') { a = x; b = y; expected = x * y; }
+  else {
+    // Division: the divisor and the answer both have the chosen number of digits
+    while (x < 2) x = randN(n);
+    while (y < 2) y = randN(n);
+    a = x * y; b = y; expected = x;
+  }
+}
+function updateProgress() {
+  progress.textContent = 'Question ' + (index + 1) + ' of ' + totalNow() + ' · Score ' + score;
+}
+function showProblem(focus) {
+  makeProblem();
+  solved = false;
+  document.getElementById('numA').textContent = a;
+  document.getElementById('numB').textContent = b;
+  document.getElementById('opSym').textContent = SYMBOLS[settings.op];
+  answer.value = '';
+  answer.disabled = false;
+  feedback.textContent = '';
+  feedback.className = '';
+  checkBtn.textContent = 'Check';
+  updateProgress();
+  if (focus) answer.focus();
+}
+function startSession(focus) {
+  index = 0; score = 0; missed = false; counted = false; done = false;
+  showProblem(focus);
+}
+function finish() {
+  done = true;
+  if (scoreData) {
+    scoreData.correct += score; scoreData.asked += totalNow(); scoreData.sessions++;
+    writeCookie(scoreData); renderScore();
+  }
+  progress.textContent = 'Finished';
+  feedback.textContent = 'You got ' + score + ' of ' + totalNow() + ' right on the first try.';
+  feedback.className = 'ok';
+  answer.value = '';
+  answer.disabled = true;
+  checkBtn.textContent = 'Play again';
+}
+function check() {
+  if (done) { startSession(true); return; }
+  if (solved) {
+    if (index + 1 >= settings.total) { finish(); return; }
+    index++; missed = false; counted = false;
+    showProblem(true);
+    return;
+  }
+  const v = answer.value.trim();
+  if (!v) return;
+  if (Number(v) === expected) {
+    solved = true;
+    if (!missed && !counted) score++;
+    counted = true;
+    updateProgress();
+    const last = index + 1 >= settings.total;
+    feedback.textContent = last ? 'Correct! Press Enter to see your score.' : 'Correct! Press Enter for the next one.';
+    feedback.className = 'ok';
+    checkBtn.textContent = last ? 'See score' : 'Next';
+  } else {
+    missed = true;
+    feedback.textContent = 'Not quite, try again.';
+    feedback.className = 'no';
+  }
+}
+
+// Click a count button to edit it in place
+const fieldSyncs = [];
+function setupField(id, key, min, max) {
+  const root = document.getElementById(id);
+  const btn = root.querySelector('.main');
+  const input = root.querySelector('input');
+  const val = root.querySelector('.val');
+  const up = root.querySelector('.up');
+  const down = root.querySelector('.down');
+  function sync() {
+    val.textContent = settings[key];
+    up.disabled = settings[key] >= max;
+    down.disabled = settings[key] <= min;
+  }
+  sync();
+  fieldSyncs.push(sync);
+  // Changing the question count must not replace the current question
+  function apply() {
+    if (key === 'total') { if (!done) updateProgress(); }
+    else startSession(false);
+  }
+  function close(commit, refocus) {
+    if (input.hidden) return;
+    input.hidden = true;
+    btn.hidden = false;
+    if (commit) {
+      const n = parseInt(input.value, 10);
+      if (!isNaN(n)) settings[key] = Math.min(max, Math.max(min, n));
+      sync();
+      apply();
+    }
+    if (refocus) btn.focus();
+  }
+  function step(d) {
+    settings[key] = Math.min(max, Math.max(min, settings[key] + d));
+    sync();
+    apply();
+  }
+  up.addEventListener('click', () => step(1));
+  down.addEventListener('click', () => step(-1));
+  btn.addEventListener('click', () => {
+    input.value = settings[key];
+    input.style.width = btn.offsetWidth + 'px';
+    btn.hidden = true;
+    input.hidden = false;
+    input.focus();
+    input.select();
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') close(true, true);
+    else if (e.key === 'Escape') close(false, true);
+  });
+  input.addEventListener('blur', () => close(true, false));
+}
+setupField('qField', 'total', 1, 50);
+setupField('dField', 'digits', 1, 4);
+
+// Print a practice sheet using the current settings
+function printSheet(cfg = settings) {
+  const sa = a, sb = b, se = expected;
+  const names = { add: 'Addition', sub: 'Subtraction', mul: 'Multiplication', div: 'Division' };
+  const sym = SYMBOLS[cfg.op];
+  let html = '<h1>Math practice sheet</h1><p class="meta">' + names[cfg.op] + ' · ' +
+    cfg.digits + (cfg.digits === 1 ? ' digit' : ' digits') + ' · ' + cfg.total + ' questions</p>' +
+    '<div class="fill">Name<span class="blank"></span>Date<span class="blank"></span></div><div class="problems">';
+  for (let i = 1; i <= cfg.total; i++) {
+    makeProblem(cfg);
+    html += '<div class="p"><span class="n">' + i + '.</span><div class="r">' + a + '</div>' +
+      '<div class="r"><span class="o">' + sym + '</span>' + b + '</div><div class="line"></div></div>';
+  }
+  html += '</div>';
+  a = sa; b = sb; expected = se; // keep the on-screen problem unchanged
+  document.getElementById('sheet').innerHTML = html;
+  window.print();
+}
+document.getElementById('printLink').addEventListener('click', e => {
+  e.preventDefault();
+  setMenu(false);
+  try { printSheet(); } catch (err) { console.error(err); }
+});
+
+document.getElementById('opSelect').addEventListener('change', e => {
+  settings.op = e.target.value;
+  startSession(false);
+});
+document.getElementById('newBtn').addEventListener('click', () => {
+  if (done) startSession(true); else showProblem(true);
+});
+checkBtn.addEventListener('click', check);
+answer.addEventListener('keydown', e => { if (e.key === 'Enter') check(); });
+
+// Keep the dropdown in sync with the default, even if the browser restores an old selection on reload
+const opSelect = document.getElementById('opSelect');
+opSelect.value = settings.op;
+window.addEventListener('pageshow', () => { opSelect.value = settings.op; });
+
+// ---- Storage helpers (storage can be unavailable, so always guarded) ----
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+// ---- Options: score cookie ----
+let scoreData = null;
+function readCookie() {
+  try {
+    const m = document.cookie.match(/(?:^|; )mathScore=([^;]*)/);
+    return m ? JSON.parse(decodeURIComponent(m[1])) : null;
+  } catch (e) { return null; }
+}
+function writeCookie(obj) {
+  try {
+    document.cookie = 'mathScore=' + encodeURIComponent(JSON.stringify(obj)) + '; max-age=31536000; path=/; SameSite=Lax';
+    return readCookie() !== null;
+  } catch (e) { return false; }
+}
+function renderScore() {
+  document.getElementById('scoreInfo').textContent = scoreData
+    ? 'Saved so far: ' + scoreData.correct + ' of ' + scoreData.asked + ' right on the first try, across ' +
+      scoreData.sessions + (scoreData.sessions === 1 ? ' set.' : ' sets.')
+    : 'Score saving is off.';
+}
+const saveScoreBox = document.getElementById('saveScore');
+saveScoreBox.addEventListener('change', () => {
+  if (saveScoreBox.checked) {
+    scoreData = { correct: 0, asked: 0, sessions: 0 };
+    if (!writeCookie(scoreData)) {
+      scoreData = null;
+      saveScoreBox.checked = false;
+      document.getElementById('scoreInfo').textContent = 'Cookies are blocked here, so your score cannot be saved.';
+      return;
+    }
+  } else {
+    scoreData = null;
+    try { document.cookie = 'mathScore=; max-age=0; path=/'; } catch (e) {}
+  }
+  renderScore();
+});
+scoreData = readCookie();
+saveScoreBox.checked = !!scoreData;
+renderScore();
+
+// ---- Options: theme ----
+const themeSelect = document.getElementById('themeSelect');
+function applyTheme(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+}
+const savedTheme = lsGet('mathTheme') || 'system';
+themeSelect.value = savedTheme;
+applyTheme(savedTheme);
+themeSelect.addEventListener('change', () => { applyTheme(themeSelect.value); lsSet('mathTheme', themeSelect.value); });
+
+// ---- Options: animations ----
+const motionSelect = document.getElementById('motionSelect');
+function applyMotion(m) { document.documentElement.dataset.motion = m; }
+// Default comes from the system's reduce-motion setting until the person picks one
+const systemMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'off' : 'full';
+let savedMotion = lsGet('mathMotion');
+if (!['full', 'reduced', 'off'].includes(savedMotion)) savedMotion = systemMotion;
+motionSelect.value = savedMotion;
+applyMotion(savedMotion);
+motionSelect.addEventListener('change', () => { applyMotion(motionSelect.value); lsSet('mathMotion', motionSelect.value); });
+
+// ---- Options: presets ----
+let presets = [];
+try { presets = JSON.parse(lsGet('mathPresets') || '[]'); } catch (e) { presets = []; }
+const OP_NAMES = { add: 'Addition', sub: 'Subtraction', mul: 'Multiplication', div: 'Division' };
+let editingId = null;
+const savePresets = () => lsSet('mathPresets', JSON.stringify(presets));
+const clampN = (v, lo, hi, d) => { const n = parseInt(v, 10); return isNaN(n) ? d : Math.min(hi, Math.max(lo, n)); };
+
+function loadPreset(p) {
+  settings.total = p.total; settings.digits = p.digits; settings.op = p.op;
+  opSelect.value = p.op;
+  fieldSyncs.forEach(fn => fn());
+  startSession(false);
+  location.hash = '#home';
+}
+function editForm(p) {
+  const f = document.createElement('div');
+  f.className = 'edit-form';
+  f.innerHTML = '<label>Name <input type="text" maxlength="40"></label>' +
+    '<label>Questions <input type="number" min="1" max="50"></label>' +
+    '<label>Digits <input type="number" min="1" max="4"></label>' +
+    '<label>Operation <select><option value="add">Addition</option><option value="sub">Subtraction</option>' +
+    '<option value="mul">Multiplication</option><option value="div">Division</option></select></label>' +
+    '<button type="button" class="btn small">Save</button>' +
+    '<button type="button" class="btn secondary small">Cancel</button>' +
+    '<button type="button" class="btn secondary small danger">Delete</button>';
+  const [name, qs, ds] = f.querySelectorAll('input');
+  const op = f.querySelector('select');
+  const [saveB, cancelB, delB] = f.querySelectorAll('button');
+  name.value = p.name; qs.value = p.total; ds.value = p.digits; op.value = p.op;
+  saveB.addEventListener('click', () => {
+    p.name = name.value.trim() || p.name;
+    p.total = clampN(qs.value, 1, 50, p.total);
+    p.digits = clampN(ds.value, 1, 4, p.digits);
+    p.op = op.value;
+    savePresets(); editingId = null; renderPresets();
+  });
+  cancelB.addEventListener('click', () => { editingId = null; renderPresets(); });
+  delB.addEventListener('click', () => { presets = presets.filter(x => x.id !== p.id); savePresets(); editingId = null; renderPresets(); });
+  return f;
+}
+function renderPresets() {
+  const list = document.getElementById('presetList');
+  list.innerHTML = '';
+  if (!presets.length) { list.innerHTML = '<li class="note">No presets yet.</li>'; return; }
+  presets.forEach(p => {
+    const li = document.createElement('li');
+    const info = document.createElement('div');
+    info.className = 'preset-info';
+    const title = document.createElement('strong');
+    title.textContent = p.name;
+    const detail = document.createElement('span');
+    detail.textContent = OP_NAMES[p.op] + ' · ' + p.digits + (p.digits === 1 ? ' digit' : ' digits') + ' · ' + p.total + ' questions';
+    info.append(title, detail);
+    li.append(info);
+    [['Edit', () => { editingId = editingId === p.id ? null : p.id; renderPresets(); }],
+     ['Load', () => loadPreset(p)],
+     ['Print', () => printSheet(p)],
+     ['Delete', () => {
+       presets = presets.filter(x => x.id !== p.id);
+       if (editingId === p.id) editingId = null;
+       savePresets(); renderPresets();
+     }]].forEach(([label, fn]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn secondary small'; b.textContent = label;
+      if (label === 'Delete') b.classList.add('danger');
+      b.addEventListener('click', fn);
+      li.append(b);
+    });
+    if (editingId === p.id) li.append(editForm(p));
+    list.append(li);
+  });
+}
+document.getElementById('savePreset').addEventListener('click', () => {
+  const nameEl = document.getElementById('presetName');
+  const name = nameEl.value.trim();
+  if (!name) { nameEl.focus(); return; }
+  presets.push({ id: Date.now().toString(36), name, total: settings.total, digits: settings.digits, op: settings.op });
+  savePresets(); nameEl.value = ''; renderPresets();
+});
+renderPresets();
+
+// ---- Page switching (#home / #options) ----
+const practiceView = document.getElementById('practiceView');
+const optionsView = document.getElementById('optionsView');
+function route() {
+  const opts = location.hash === '#options';
+  practiceView.hidden = opts;
+  optionsView.hidden = !opts;
+  const home = document.getElementById('navHome'), nav = document.getElementById('navOptions');
+  if (opts) { nav.setAttribute('aria-current', 'page'); home.removeAttribute('aria-current'); }
+  else { home.setAttribute('aria-current', 'page'); nav.removeAttribute('aria-current'); }
+}
+window.addEventListener('hashchange', route);
+['navHome', 'navOptions'].forEach(id => document.getElementById(id).addEventListener('click', () => setMenu(false)));
+route();
+
+startSession(false);
+</script>
+</body>
+</html>
